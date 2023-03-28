@@ -1,12 +1,15 @@
-const batchPlay = require('photoshop').action.batchPlay
 const psapi = require('../psapi')
+// const sdapi = require('../sdapi_py_re')
 const layer_util = require('../utility/layer')
 const general = require('./general')
 const Jimp = require('../jimp/browser/lib/jimp.min')
 
+const { executeAsModal } = require('photoshop').core
+const batchPlay = require('photoshop').action.batchPlay
 const formats = require('uxp').storage.formats
 const storage = require('uxp').storage
 const fs = storage.localFileSystem
+
 async function snapShotLayer() {
     //snapshot layer with no mask
     let command = [
@@ -248,7 +251,7 @@ class IO {
         return layer
     }
 
-    static async getSelectionFromCanvasAsBase64(
+    static async getSelectionFromCanvasAsBase64Silent(
         selectionInfo,
         b_resize = false,
         resize_width = 0,
@@ -296,6 +299,59 @@ class IO {
         } catch (e) {
             console.warn(e)
         }
+    }
+    static async getSelectionFromCanvasAsBase64NonSilent(
+        layer,
+        image_name,
+        width,
+        height
+    ) {
+        try {
+            const image_buffer = await psapi.newExportPng(
+                layer,
+                image_name,
+                width,
+                height
+            )
+
+            const base64_image = _arrayBufferToBase64(image_buffer) //convert the buffer to base64
+            //send the base64 to the server to save the file in the desired directory
+            // await sdapi.requestSavePng(base64_image, image_name)
+            // await saveFileInSubFolder(base64_image, document_name, image_name)
+            // debugger
+            const { requestSavePng } = require('../sdapi_py_re')
+            await requestSavePng(base64_image, image_name)
+            return base64_image
+        } catch (e) {
+            console.warn(e)
+        }
+    }
+    static async getSelectionFromCanvasAsBase64Interface(
+        width,
+        height,
+        layer,
+        selectionInfo,
+        resize = true,
+        use_silent_mode = true,
+        image_name = 'temp.png'
+    ) {
+        let base64_image
+        if (use_silent_mode) {
+            base64_image = await this.getSelectionFromCanvasAsBase64Silent(
+                selectionInfo,
+                resize,
+                width,
+                height
+            )
+        } else {
+            base64_image = await this.getSelectionFromCanvasAsBase64NonSilent(
+                layer,
+                image_name,
+                width,
+                height
+            )
+        }
+        return base64_image
     }
 }
 
@@ -407,7 +463,7 @@ class IOHelper {
                     Jimp.MIME_PNG
                 )
 
-                console.log('jimp: base64_url: ', base64_url)
+                // console.log('jimp: base64_url: ', base64_url)
                 // document.getElementById("image").setAttribute("src", data);
 
                 return base64_url
@@ -439,6 +495,14 @@ class IOFolder {
             settings_entry = await this.createFolderSafe('Settings')
         })
         return settings_entry
+    }
+    static async findOrCreateFolderExe(folder_name) {
+        //create a folder named "Settings" in the DataFolder
+        let folder_entry
+        await executeAsModal(async () => {
+            folder_entry = await this.createFolderSafe(folder_name)
+        })
+        return folder_entry
     }
 
     static async doesFolderExist(folder_name) {
@@ -500,7 +564,20 @@ class IOFolder {
         const settings_entry = await this.createSettingsFolder()
         return settings_entry
     }
-
+    static async getPresetFolder() {
+        //will create folder if does not exist. always return a folder entry
+        const preset_entry = await this.findOrCreateFolderExe('Preset')
+        return preset_entry
+    }
+    static async getCustomPresetFolder(
+        custom_preset_folder_name = 'custom_preset'
+    ) {
+        //will create folder if does not exist. always return a folder entry
+        const preset_entry = await this.findOrCreateFolderExe(
+            custom_preset_folder_name
+        )
+        return preset_entry
+    }
     static async createFolderIfDoesNotExist(folder_name) {
         try {
             await executeAsModal(async () => {
@@ -533,6 +610,12 @@ class IOJson {
         } catch (e) {
             console.warn(e)
         }
+    }
+
+    static async saveJsonToFileExe(json, folder_entry, file_name) {
+        await executeAsModal(async () => {
+            await this.saveJsonToFile(json, folder_entry, file_name)
+        })
     }
     static async loadJsonFromFile(folder_entry, file_name) {
         const json_file_name = file_name
@@ -581,6 +664,22 @@ class IOJson {
             settings_file_name
         )
         return settings_json
+    }
+
+    static async getJsonEntries(doc_entry) {
+        let entries = await doc_entry.getEntries()
+        const json_entries = entries.filter(
+            (e) => e.isFile && e.name.toLowerCase().includes('.json') // must be a file and has the of the type .json
+        )
+        console.log('json_entries: ', json_entries)
+        // .forEach((e) => console.log(e.name))
+        return json_entries
+    }
+    static async deleteFile(doc_entry, file_name) {
+        try {
+            const file_entry = await doc_entry.getEntry(file_name)
+            file_entry.delete()
+        } catch (e) {}
     }
 }
 
